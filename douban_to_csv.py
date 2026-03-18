@@ -77,10 +77,10 @@ def get_imdb_id(url):
                     break
         else:
             print('请手动添加', url)
-    except:
+    except Exception:
         print('无法获得IMDB编号的电影页面：', url)
-    finally:
-        return imdb_id if not imdb_id or imdb_id.startswith('tt') else None
+
+    return imdb_id if not imdb_id or imdb_id.startswith('tt') else None
 
 
 def get_csv_path(file_name):
