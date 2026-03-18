@@ -1,0 +1,11 @@
+.conda/
+.conda-pkgs/
+.pip-cache/
+.venv/
+movie.csv
+missing_imdb.csv
+config.yaml
+.idea/
+_vscode/
+__pycache__/
+*.pyc
