@@ -223,10 +223,16 @@ python .\csv_to_imdb.py 1
 python .\csv_to_imdb.py 2
 ```
 
+Terminal example while IMDb sync is running:
+
+![IMDb sync terminal demo](figure/imdb_runing_terminal.png)
+
 Notes:
 
 - The allowed offset range is only `-2` to `2`
 - The default offset is `-1`
+- While the script is running, you can keep using your computer for other tasks, including during the IMDb automation phase
+- You generally do not need to keep watching the browser window; for better stability, avoid manually interacting with the IMDb window that is currently being controlled by automation
 
 ### Rating Conversion
 

@@ -32,6 +32,10 @@ def load_config():
 CONFIG = load_config()
 MOVIE_CSV_FILE = CONFIG.get('MOVIE_CSV_FILE', 'movie.csv')
 CHROMEDRIVER_PATH = CONFIG.get('CHROMEDRIVER_PATH')
+SEARCH_BOX_TIMEOUT = 12
+TITLE_PAGE_TIMEOUT = 8
+RATING_ACTION_TIMEOUT = 8
+POST_ACTION_DELAY_SECONDS = 0.2
 
 
 def has_douban_link(row):
@@ -65,6 +69,49 @@ def clear_record_synced(row):
         row[sync_flag_index] = ''
 
 
+def persist_all_records(file_name, all_records):
+    temp_file_name = f'{file_name}.tmp'
+    with open(temp_file_name, 'w', encoding='utf-8', newline='') as file:
+        writer = csv.writer(file, lineterminator='\n')
+        writer.writerows(all_records)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temp_file_name, file_name)
+
+
+def wait_for_search_box(driver, timeout=SEARCH_BOX_TIMEOUT):
+    return WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.ID, 'suggestion-search'))
+    )
+
+
+def wait_for_title_page(driver, imdb_id, timeout=TITLE_PAGE_TIMEOUT):
+    already_rated_xpath = '//div[@data-testid="hero-rating-bar__user-rating__score"]'
+    rate_btn_xpath = '//div[@data-testid="hero-rating-bar__user-rating"]/button'
+    result_link_xpath = f'//a[contains(@href, "/title/{imdb_id}/")]'
+
+    def title_page_or_result_ready(d):
+        if imdb_id in d.current_url:
+            has_rating_bar = len(d.find_elements_by_xpath(already_rated_xpath)) > 0
+            has_rate_btn = len(d.find_elements_by_xpath(rate_btn_xpath)) > 0
+            if has_rating_bar or has_rate_btn:
+                return True
+        return len(d.find_elements_by_xpath(result_link_xpath)) > 0
+
+    WebDriverWait(driver, timeout).until(title_page_or_result_ready)
+
+    if imdb_id not in driver.current_url:
+        result_links = driver.find_elements_by_xpath(result_link_xpath)
+        if result_links:
+            driver.execute_script("arguments[0].click();", result_links[0])
+            WebDriverWait(driver, timeout).until(
+                lambda d: imdb_id in d.current_url and (
+                    len(d.find_elements_by_xpath(already_rated_xpath)) > 0
+                    or len(d.find_elements_by_xpath(rate_btn_xpath)) > 0
+                )
+            )
+
+
 def ensure_selenium_urllib3_compatibility():
     selenium_major = int(selenium_version.split('.', 1)[0])
     urllib3_major = int(urllib3.__version__.split('.', 1)[0])
@@ -79,6 +126,7 @@ def get_chrome_driver():
     ensure_selenium_urllib3_compatibility()
     options = webdriver.ChromeOptions()
     options.add_argument('--no-sandbox')
+    options.page_load_strategy = 'eager'
     
     try:
         if CHROMEDRIVER_PATH:
@@ -97,15 +145,13 @@ def get_chrome_driver():
 
 def login():
     driver = get_chrome_driver()
-    driver.set_page_load_timeout(30)
+    driver.set_page_load_timeout(15)
     driver.set_script_timeout(30)
     driver.get('https://www.imdb.com/registration/signin')
     print('Please complete IMDb login in the opened browser window.')
     input('After you are fully logged in to IMDb, press Enter here to continue...')
     driver.get('https://www.imdb.com/')
-    WebDriverWait(driver, 60).until(
-        EC.presence_of_element_located((By.ID, 'suggestion-search'))
-    )
+    wait_for_search_box(driver)
     print('IMDb login confirmed, continuing...')
     return driver
     driver.get('https://www.imdb.com/registration/signin')
@@ -161,12 +207,11 @@ def mark(is_unmark=False, rating_ajust=-1):
             print('无法在IMDB上找到：', movie_name)
             continue
 
-        WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, 'suggestion-search')))
-        search_bar = driver.find_element_by_id('suggestion-search')
+        search_bar = wait_for_search_box(driver)
         search_bar.clear()
         search_bar.send_keys(imdb_id)
         search_bar.submit()
-        time.sleep(3)
+        wait_for_title_page(driver, imdb_id)
         already_rated_xpath = '//div[@data-testid="hero-rating-bar__user-rating__score"]'
         already_rated = len(driver.find_elements_by_xpath(already_rated_xpath)) > 0
         if is_unmark and not already_rated:
@@ -177,12 +222,13 @@ def mark(is_unmark=False, rating_ajust=-1):
         if not is_unmark and already_rated:
             already_marked.append(f'{movie_name}({imdb_id})')
             mark_record_synced(line)
+            persist_all_records(file_name, all_records)
             print(f'已经在IMDB上打过分，跳过并标记为已同步：{movie_name}({imdb_id})')
             continue
 
         rate_btn_xpath = '//div[@data-testid="hero-rating-bar__user-rating"]/button'
         try:
-            rate_button = WebDriverWait(driver, 10).until(
+            rate_button = WebDriverWait(driver, RATING_ACTION_TIMEOUT).until(
                 EC.element_to_be_clickable((By.XPATH, rate_btn_xpath))
             )
         except TimeoutException:
@@ -195,23 +241,24 @@ def mark(is_unmark=False, rating_ajust=-1):
 
             if is_unmark:
                 remove_rating_xpath = "//div[@class='ipc-starbar']/following-sibling::button[2]"
-                remove_button = WebDriverWait(driver, 10).until(
+                remove_button = WebDriverWait(driver, RATING_ACTION_TIMEOUT).until(
                     EC.element_to_be_clickable((By.XPATH, remove_rating_xpath))
                 )
                 driver.execute_script("arguments[0].click();", remove_button)
                 clear_record_synced(line)
+                persist_all_records(file_name, all_records)
                 print(f'电影删除打分成功：{movie_name}({imdb_id})')
                 success_unmarked += 1
             else:
                 star_ele_xpath = f'//button[@aria-label="Rate {movie_rate}"]'
-                star_ele = WebDriverWait(driver, 10).until(
+                star_ele = WebDriverWait(driver, RATING_ACTION_TIMEOUT).until(
                     EC.visibility_of_element_located((By.XPATH, star_ele_xpath))
                 )
                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", star_ele)
                 driver.execute_script("arguments[0].click();", star_ele)
 
                 confirm_rate_ele_xpath = "//div[@class='ipc-starbar']/following-sibling::button"
-                WebDriverWait(driver, 10).until(
+                WebDriverWait(driver, RATING_ACTION_TIMEOUT).until(
                     lambda d: d.find_element_by_xpath(confirm_rate_ele_xpath).is_enabled()
                 )
                 confirm_button = driver.find_element_by_xpath(confirm_rate_ele_xpath)
@@ -219,17 +266,13 @@ def mark(is_unmark=False, rating_ajust=-1):
                 print(f'电影打分成功：{movie_name}({imdb_id}) → {movie_rate}★')
                 success_marked += 1
                 mark_record_synced(line)
+                persist_all_records(file_name, all_records)
         except Exception as exc:
             can_not_found.append(movie_name)
             print(f'处理IMDb打分弹窗失败：{movie_name}({imdb_id}) -> {type(exc).__name__}: {exc}')
             continue
 
-        time.sleep(1)
-    
-    # 保存更新后的记录
-    with open(file_name, 'w', encoding='utf-8', newline='') as file:
-        writer = csv.writer(file, lineterminator='\n')
-        writer.writerows(all_records)
+        time.sleep(POST_ACTION_DELAY_SECONDS)
     
     driver.close()
 

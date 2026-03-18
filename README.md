@@ -223,10 +223,16 @@ python .\csv_to_imdb.py 1
 python .\csv_to_imdb.py 2
 ```
 
+IMDb 自动化打分时的终端示例：
+
+![IMDb sync terminal demo](figure/imdb_runing_terminal.png)
+
 说明：
 
 - 允许的偏移范围只有 `-2` 到 `2`
 - 默认偏移值是 `-1`
+- 脚本运行过程中，你可以继续用电脑做其他事情，包括 IMDb 自动化打分阶段
+- 一般不需要一直盯着浏览器窗口；为了更稳，尽量不要手动操作正在被自动化控制的 IMDb 窗口
 
 ### 评分换算
 
