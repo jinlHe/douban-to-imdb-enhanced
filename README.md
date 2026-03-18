@@ -109,6 +109,10 @@ python .\douban_to_csv.py <user_id> [yyyymmdd] [start_page]
 python .\douban_to_csv.py 172989509 20240101 17
 ```
 
+运行中的终端示例：
+
+![douban_to_csv terminal demo](figure/douban2csv_runing_terminal.png)
+
 ### 参数说明
 
 - `user_id`：不传时使用 `config.yaml` 中的 `user_id`
@@ -145,10 +149,14 @@ python .\douban_to_csv.py 172989509 20240101 17
 - 存放已拿到有效 IMDb ID 的记录
 - 每行格式大致为：`标题, 豆瓣星级, imdb_id, douban_link`
 
+![movie.csv sample](figure/moviecsv.png)
+
 `missing_imdb.csv`：
 
 - 存放没有 IMDb ID 或 IMDb ID 无效的记录
 - 只在自身文件内部做去重，不影响 `movie.csv` 的去重判断
+
+![missing_imdb.csv sample](figure/missingcsv.png)
 
 ## 第二步：同步 IMDb 评分
 
