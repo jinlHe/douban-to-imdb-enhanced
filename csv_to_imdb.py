@@ -223,6 +223,7 @@ def mark(is_unmark=False, rating_ajust=-1):
             already_marked.append(f'{movie_name}({imdb_id})')
             mark_record_synced(line)
             persist_all_records(file_name, all_records)
+            persist_all_records(file_name, all_records)
             print(f'已经在IMDB上打过分，跳过并标记为已同步：{movie_name}({imdb_id})')
             continue
 
@@ -247,6 +248,7 @@ def mark(is_unmark=False, rating_ajust=-1):
                 driver.execute_script("arguments[0].click();", remove_button)
                 clear_record_synced(line)
                 persist_all_records(file_name, all_records)
+                persist_all_records(file_name, all_records)
                 print(f'电影删除打分成功：{movie_name}({imdb_id})')
                 success_unmarked += 1
             else:
@@ -266,6 +268,7 @@ def mark(is_unmark=False, rating_ajust=-1):
                 print(f'电影打分成功：{movie_name}({imdb_id}) → {movie_rate}★')
                 success_marked += 1
                 mark_record_synced(line)
+                persist_all_records(file_name, all_records)
                 persist_all_records(file_name, all_records)
         except Exception as exc:
             can_not_found.append(movie_name)
