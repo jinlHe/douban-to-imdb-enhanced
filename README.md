@@ -1,5 +1,7 @@
 # douban-to-imdb-enhanced
 
+[English README](README_en.md)
+
 将豆瓣电影评分导出为 CSV，再通过 Selenium 同步到 IMDb。
 
 当前仓库基于 [f-is-h/douban-to-imdb](https://github.com/f-is-h/douban-to-imdb) 做了适配和补充，文档说明以本仓库当前代码为准。
