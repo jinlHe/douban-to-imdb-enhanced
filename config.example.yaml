@@ -8,4 +8,4 @@ start_page: 0
 START_DATE: "20240101"
 MOVIE_CSV_FILE: "movie.csv"
 MISSING_IMDB_CSV_FILE: "missing_imdb.csv"
-CHROMEDRIVER_PATH: "C:/path/to/chromedriver.exe"
+CHROMEDRIVER_PATH: "E:\\chromedriver\\chromedriver-win64\\chromedriver.exe"
