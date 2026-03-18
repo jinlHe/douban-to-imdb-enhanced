@@ -65,6 +65,16 @@ def clear_record_synced(row):
         row[sync_flag_index] = ''
 
 
+def persist_all_records(file_name, all_records):
+    temp_file_name = f'{file_name}.tmp'
+    with open(temp_file_name, 'w', encoding='utf-8', newline='') as file:
+        writer = csv.writer(file, lineterminator='\n')
+        writer.writerows(all_records)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temp_file_name, file_name)
+
+
 def ensure_selenium_urllib3_compatibility():
     selenium_major = int(selenium_version.split('.', 1)[0])
     urllib3_major = int(urllib3.__version__.split('.', 1)[0])
@@ -177,6 +187,7 @@ def mark(is_unmark=False, rating_ajust=-1):
         if not is_unmark and already_rated:
             already_marked.append(f'{movie_name}({imdb_id})')
             mark_record_synced(line)
+            persist_all_records(file_name, all_records)
             print(f'已经在IMDB上打过分，跳过并标记为已同步：{movie_name}({imdb_id})')
             continue
 
@@ -200,6 +211,7 @@ def mark(is_unmark=False, rating_ajust=-1):
                 )
                 driver.execute_script("arguments[0].click();", remove_button)
                 clear_record_synced(line)
+                persist_all_records(file_name, all_records)
                 print(f'电影删除打分成功：{movie_name}({imdb_id})')
                 success_unmarked += 1
             else:
@@ -219,17 +231,13 @@ def mark(is_unmark=False, rating_ajust=-1):
                 print(f'电影打分成功：{movie_name}({imdb_id}) → {movie_rate}★')
                 success_marked += 1
                 mark_record_synced(line)
+                persist_all_records(file_name, all_records)
         except Exception as exc:
             can_not_found.append(movie_name)
             print(f'处理IMDb打分弹窗失败：{movie_name}({imdb_id}) -> {type(exc).__name__}: {exc}')
             continue
 
         time.sleep(1)
-    
-    # 保存更新后的记录
-    with open(file_name, 'w', encoding='utf-8', newline='') as file:
-        writer = csv.writer(file, lineterminator='\n')
-        writer.writerows(all_records)
     
     driver.close()
 
