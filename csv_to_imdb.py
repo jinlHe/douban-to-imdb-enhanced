@@ -39,6 +39,7 @@ TITLE_PAGE_TIMEOUT = 8
 RATING_ACTION_TIMEOUT = 8
 POST_ACTION_DELAY_SECONDS = 0.2
 PAGE_LOAD_TIMEOUT = 20
+LOGIN_WAIT_TIMEOUT = 600
 
 
 def is_record_eligible(row):
@@ -183,6 +184,18 @@ def wait_for_search_box(driver, timeout=SEARCH_BOX_TIMEOUT):
     )
 
 
+def is_in_sign_in_flow(url):
+    sign_in_markers = (
+        'imdb.com/registration/signin',
+        'amazon.com/ap/signin',
+        'amazon.co.jp/ap/signin',
+        'amazon.de/ap/signin',
+        'amazon.co.uk/ap/signin',
+    )
+    normalized_url = (url or '').lower()
+    return any(marker in normalized_url for marker in sign_in_markers)
+
+
 def dismiss_rating_prompt(driver):
     close_button_xpaths = [
         '//button[@aria-label="Close Prompt"]',
@@ -217,6 +230,24 @@ def get_ready_search_box(driver, timeout=SEARCH_BOX_TIMEOUT):
         except TimeoutException:
             safe_get(driver, 'https://www.imdb.com/')
             return wait_for_search_box(driver, timeout=timeout)
+
+
+def wait_for_login_success(driver, timeout=LOGIN_WAIT_TIMEOUT):
+    def login_succeeded(d):
+        current_url = d.current_url
+        if is_in_sign_in_flow(current_url):
+            return False
+
+        if 'imdb.com' not in (current_url or '').lower():
+            return False
+
+        try:
+            search_box = d.find_elements_by_id('suggestion-search')
+            return bool(search_box and search_box[0].is_displayed())
+        except Exception:
+            return False
+
+    WebDriverWait(driver, timeout, poll_frequency=1).until(login_succeeded)
 
 
 def safe_get(driver, url):
@@ -305,26 +336,15 @@ def login():
     driver.set_script_timeout(30)
     safe_get(driver, 'https://www.imdb.com/registration/signin')
     print('Please complete IMDb login in the opened browser window.')
-    input('After you are fully logged in to IMDb, press Enter here to continue...')
+    print('Waiting for IMDb login to complete automatically...')
     try:
-        get_ready_search_box(driver, timeout=3)
+        wait_for_login_success(driver)
     except TimeoutException:
-        safe_get(driver, 'https://www.imdb.com/')
+        raise RuntimeError('Timed out waiting for IMDb login to complete automatically.')
+
+    safe_get(driver, 'https://www.imdb.com/')
     get_ready_search_box(driver)
     print('IMDb login confirmed, continuing...')
-    return driver
-    driver.get('https://www.imdb.com/registration/signin')
-    element = driver.find_element_by_id('signin-perks')
-    driver.execute_script("arguments[0].setAttribute('style', 'color: red;font-size: larger; font-weight: 700;')",
-                          element)
-    driver.execute_script("arguments[0].innerText = '请登录自己的IMDB账号, 程序将等待至登录成功。'", element)
-    current_url = driver.current_url
-    while True:
-        WebDriverWait(driver, 600).until(EC.url_changes(current_url))
-        new_url = driver.current_url
-        if new_url == 'https://www.imdb.com/?ref_=login':
-            break
-    print('IMDB登录成功')
     return driver
 
 

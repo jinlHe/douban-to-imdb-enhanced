@@ -185,9 +185,10 @@ The script will:
 
 1. Open the IMDb sign-in page
 2. Wait for you to finish logging in manually in the browser
-3. Wait for you to return to the terminal and press Enter once
+3. Automatically detect whether login has completed successfully
 4. Navigate back to the IMDb homepage and confirm the search box is available
 5. Start syncing ratings one by one
+
 
 Recommended:
 
