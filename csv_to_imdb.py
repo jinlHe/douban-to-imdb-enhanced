@@ -97,6 +97,17 @@ def safe_get(driver, url):
             pass
 
 
+def safe_submit_search(driver, search_bar, imdb_id):
+    try:
+        search_bar.submit()
+    except TimeoutException:
+        print(f'IMDb搜索结果页加载超时，停止继续等待并继续执行：{imdb_id}')
+        try:
+            driver.execute_script("window.stop();")
+        except Exception:
+            pass
+
+
 def wait_for_title_page(driver, imdb_id, timeout=TITLE_PAGE_TIMEOUT):
     already_rated_xpath = '//div[@data-testid="hero-rating-bar__user-rating__score"]'
     rate_btn_xpath = '//div[@data-testid="hero-rating-bar__user-rating"]/button'
@@ -225,7 +236,7 @@ def mark(is_unmark=False, rating_ajust=-1):
         search_bar = wait_for_search_box(driver)
         search_bar.clear()
         search_bar.send_keys(imdb_id)
-        search_bar.submit()
+        safe_submit_search(driver, search_bar, imdb_id)
         wait_for_title_page(driver, imdb_id)
         already_rated_xpath = '//div[@data-testid="hero-rating-bar__user-rating__score"]'
         already_rated = len(driver.find_elements_by_xpath(already_rated_xpath)) > 0
