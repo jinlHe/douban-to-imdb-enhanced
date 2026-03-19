@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import csv
+from shutil import get_terminal_size
 
 import urllib3
 import yaml
@@ -37,6 +38,10 @@ TITLE_PAGE_TIMEOUT = 8
 RATING_ACTION_TIMEOUT = 8
 POST_ACTION_DELAY_SECONDS = 0.2
 PAGE_LOAD_TIMEOUT = 20
+
+
+def is_record_eligible(row):
+    return len(row) >= 3 and len(row) > 1 and bool(row[1])
 
 
 def has_douban_link(row):
@@ -78,6 +83,97 @@ def persist_all_records(file_name, all_records):
         file.flush()
         os.fsync(file.fileno())
     os.replace(temp_file_name, file_name)
+
+
+def format_duration(seconds):
+    if seconds is None:
+        return '--:--'
+    seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+    return f'{minutes:02d}:{seconds:02d}'
+
+
+class ProgressTracker:
+    def __init__(self, total_records, initial_done=0):
+        self.total_records = total_records
+        self.initial_done = initial_done
+        self.done_count = initial_done
+        self.remote_total = max(0, total_records - initial_done)
+        self.remote_processed = 0
+        self.changed_count = 0
+        self.already_done_count = 0
+        self.failed_count = 0
+        self.eta_sample_count = 0
+        self.eta_elapsed_seconds = 0.0
+        self.last_render_length = 0
+
+    def _eta_seconds(self):
+        remaining_remote = max(0, self.remote_total - self.remote_processed)
+        if remaining_remote == 0:
+            return 0
+        if self.eta_sample_count == 0 or self.remote_processed == 0:
+            return None
+
+        actionable_ratio = self.eta_sample_count / self.remote_processed
+        average_actionable_seconds = self.eta_elapsed_seconds / self.eta_sample_count
+        estimated_remaining_actionable = remaining_remote * actionable_ratio
+        return average_actionable_seconds * estimated_remaining_actionable
+
+    def _bar(self, width=24):
+        if self.total_records <= 0:
+            return '-' * width
+        filled = int(width * self.done_count / self.total_records)
+        filled = min(width, max(0, filled))
+        return '#' * filled + '-' * (width - filled)
+
+    def render(self):
+        terminal_width = get_terminal_size((120, 20)).columns
+        percent = 100.0 if self.total_records == 0 else (self.done_count / self.total_records) * 100
+        line = (
+            f'[{self._bar()}] {self.done_count}/{self.total_records} {percent:5.1f}% '
+            f'| changed {self.changed_count} '
+            f'| already {self.already_done_count} '
+            f'| failed {self.failed_count} '
+            f'| ETA {format_duration(self._eta_seconds())}'
+        )
+        if len(line) > terminal_width:
+            line = line[:terminal_width - 3] + '...'
+        padding = max(0, self.last_render_length - len(line))
+        sys.stdout.write('\r' + line + ' ' * padding)
+        sys.stdout.flush()
+        self.last_render_length = len(line)
+
+    def log(self, message):
+        if self.last_render_length:
+            sys.stdout.write('\r' + ' ' * self.last_render_length + '\r')
+            sys.stdout.flush()
+            self.last_render_length = 0
+        print(message)
+        self.render()
+
+    def update(self, include_in_eta, elapsed_seconds, changed=False, already_done=False, failed=False):
+        self.done_count += 1
+        self.remote_processed += 1
+        if include_in_eta:
+            self.eta_sample_count += 1
+            self.eta_elapsed_seconds += elapsed_seconds
+        if changed:
+            self.changed_count += 1
+        if already_done:
+            self.already_done_count += 1
+        if failed:
+            self.failed_count += 1
+        self.render()
+
+    def finish(self):
+        self.render()
+        if self.last_render_length:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+            self.last_render_length = 0
 
 
 def wait_for_search_box(driver, timeout=SEARCH_BOX_TIMEOUT):
@@ -210,27 +306,25 @@ def mark(is_unmark=False, rating_ajust=-1):
         content = csv.reader(file, lineterminator='\n')
         for line in content:
             all_records.append(line)
-    
+
+    eligible_records = [line for line in all_records if is_record_eligible(line)]
+    initial_done = 0 if is_unmark else sum(1 for line in eligible_records if is_record_synced(line))
+    tracker = ProgressTracker(len(eligible_records), initial_done=initial_done)
+    tracker.render()
+
     # 处理每条记录
-    for line in all_records:
-        if len(line) < 3:
-            print('跳过格式不正确的CSV记录：', line)
-            continue
-
-        # 如果只标记为看过并没有打过分则略过
-        if not line[1]:
-            continue
-
+    for line in eligible_records:
         if not is_unmark and is_record_synced(line):
-            print(f'跳过已同步的电影：{line[0]}({line[2]})')
             continue
 
         movie_name = line[0]
         movie_rate = int(line[1]) * 2 + rating_ajust
         imdb_id = line[2]
+        item_start = time.perf_counter()
         if not imdb_id or not imdb_id.startswith('tt'):
             can_not_found.append(movie_name)
-            print('无法在IMDB上找到：', movie_name)
+            tracker.log(f'无法在IMDB上找到：{movie_name}')
+            tracker.update(include_in_eta=False, elapsed_seconds=0.0, failed=True)
             continue
 
         search_bar = wait_for_search_box(driver)
@@ -242,15 +336,16 @@ def mark(is_unmark=False, rating_ajust=-1):
         already_rated = len(driver.find_elements_by_xpath(already_rated_xpath)) > 0
         if is_unmark and not already_rated:
             never_marked.append(f'{movie_name}({imdb_id})')
-            print(f'并没有在IMDB上打过分：{movie_name}({imdb_id})')
+            tracker.log(f'并没有在IMDB上打过分：{movie_name}({imdb_id})')
+            tracker.update(include_in_eta=False, elapsed_seconds=time.perf_counter() - item_start, already_done=True)
             continue
 
         if not is_unmark and already_rated:
             already_marked.append(f'{movie_name}({imdb_id})')
             mark_record_synced(line)
             persist_all_records(file_name, all_records)
-            persist_all_records(file_name, all_records)
-            print(f'已经在IMDB上打过分，跳过并标记为已同步：{movie_name}({imdb_id})')
+            tracker.log(f'已经在IMDB上打过分，跳过并标记为已同步：{movie_name}({imdb_id})')
+            tracker.update(include_in_eta=False, elapsed_seconds=time.perf_counter() - item_start, already_done=True)
             continue
 
         rate_btn_xpath = '//div[@data-testid="hero-rating-bar__user-rating"]/button'
@@ -260,7 +355,8 @@ def mark(is_unmark=False, rating_ajust=-1):
             )
         except TimeoutException:
             can_not_found.append(movie_name)
-            print(f'无法定位IMDb打分按钮：{movie_name}({imdb_id})')
+            tracker.log(f'无法定位IMDb打分按钮：{movie_name}({imdb_id})')
+            tracker.update(include_in_eta=True, elapsed_seconds=time.perf_counter() - item_start, failed=True)
             continue
 
         try:
@@ -274,9 +370,13 @@ def mark(is_unmark=False, rating_ajust=-1):
                 driver.execute_script("arguments[0].click();", remove_button)
                 clear_record_synced(line)
                 persist_all_records(file_name, all_records)
-                persist_all_records(file_name, all_records)
-                print(f'电影删除打分成功：{movie_name}({imdb_id})')
+                tracker.log(f'电影删除打分成功：{movie_name}({imdb_id})')
                 success_unmarked += 1
+                tracker.update(
+                    include_in_eta=True,
+                    elapsed_seconds=time.perf_counter() - item_start,
+                    changed=True,
+                )
             else:
                 star_ele_xpath = f'//button[@aria-label="Rate {movie_rate}"]'
                 star_ele = WebDriverWait(driver, RATING_ACTION_TIMEOUT).until(
@@ -291,18 +391,24 @@ def mark(is_unmark=False, rating_ajust=-1):
                 )
                 confirm_button = driver.find_element_by_xpath(confirm_rate_ele_xpath)
                 driver.execute_script("arguments[0].click();", confirm_button)
-                print(f'电影打分成功：{movie_name}({imdb_id}) → {movie_rate}★')
+                tracker.log(f'电影打分成功：{movie_name}({imdb_id}) → {movie_rate}★')
                 success_marked += 1
                 mark_record_synced(line)
                 persist_all_records(file_name, all_records)
-                persist_all_records(file_name, all_records)
+                tracker.update(
+                    include_in_eta=True,
+                    elapsed_seconds=time.perf_counter() - item_start,
+                    changed=True,
+                )
         except Exception as exc:
             can_not_found.append(movie_name)
-            print(f'处理IMDb打分弹窗失败：{movie_name}({imdb_id}) -> {type(exc).__name__}: {exc}')
+            tracker.log(f'处理IMDb打分弹窗失败：{movie_name}({imdb_id}) -> {type(exc).__name__}: {exc}')
+            tracker.update(include_in_eta=True, elapsed_seconds=time.perf_counter() - item_start, failed=True)
             continue
 
         time.sleep(POST_ACTION_DELAY_SECONDS)
-    
+
+    tracker.finish()
     driver.close()
 
     print('***************************************************************************')
