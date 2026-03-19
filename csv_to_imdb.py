@@ -9,9 +9,10 @@ import yaml
 from selenium import webdriver
 from selenium import __version__ as selenium_version
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import InvalidElementStateException, TimeoutException
 from selenium.webdriver.chrome.options import Options
 
 CONFIG_FILE = 'config.yaml'
@@ -178,8 +179,44 @@ class ProgressTracker:
 
 def wait_for_search_box(driver, timeout=SEARCH_BOX_TIMEOUT):
     return WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.ID, 'suggestion-search'))
+        EC.element_to_be_clickable((By.ID, 'suggestion-search'))
     )
+
+
+def dismiss_rating_prompt(driver):
+    close_button_xpaths = [
+        '//button[@aria-label="Close Prompt"]',
+        '//button[@aria-label="Close"]',
+        '//button[@data-testid="promptable__x"]',
+    ]
+
+    try:
+        driver.find_element_by_tag_name('body').send_keys(Keys.ESCAPE)
+        time.sleep(0.1)
+    except Exception:
+        pass
+
+    for xpath in close_button_xpaths:
+        try:
+            close_buttons = driver.find_elements_by_xpath(xpath)
+            if close_buttons:
+                driver.execute_script("arguments[0].click();", close_buttons[0])
+                time.sleep(0.1)
+                return
+        except Exception:
+            continue
+
+
+def get_ready_search_box(driver, timeout=SEARCH_BOX_TIMEOUT):
+    try:
+        return wait_for_search_box(driver, timeout=timeout)
+    except TimeoutException:
+        dismiss_rating_prompt(driver)
+        try:
+            return wait_for_search_box(driver, timeout=2)
+        except TimeoutException:
+            safe_get(driver, 'https://www.imdb.com/')
+            return wait_for_search_box(driver, timeout=timeout)
 
 
 def safe_get(driver, url):
@@ -270,10 +307,10 @@ def login():
     print('Please complete IMDb login in the opened browser window.')
     input('After you are fully logged in to IMDb, press Enter here to continue...')
     try:
-        wait_for_search_box(driver, timeout=3)
+        get_ready_search_box(driver, timeout=3)
     except TimeoutException:
         safe_get(driver, 'https://www.imdb.com/')
-    wait_for_search_box(driver)
+    get_ready_search_box(driver)
     print('IMDb login confirmed, continuing...')
     return driver
     driver.get('https://www.imdb.com/registration/signin')
@@ -327,8 +364,13 @@ def mark(is_unmark=False, rating_ajust=-1):
             tracker.update(include_in_eta=False, elapsed_seconds=0.0, failed=True)
             continue
 
-        search_bar = wait_for_search_box(driver)
-        search_bar.clear()
+        search_bar = get_ready_search_box(driver)
+        try:
+            search_bar.clear()
+        except InvalidElementStateException:
+            dismiss_rating_prompt(driver)
+            search_bar = get_ready_search_box(driver)
+            driver.execute_script("arguments[0].value = '';", search_bar)
         search_bar.send_keys(imdb_id)
         safe_submit_search(driver, search_bar, imdb_id)
         wait_for_title_page(driver, imdb_id)
@@ -404,6 +446,7 @@ def mark(is_unmark=False, rating_ajust=-1):
             can_not_found.append(movie_name)
             tracker.log(f'处理IMDb打分弹窗失败：{movie_name}({imdb_id}) -> {type(exc).__name__}: {exc}')
             tracker.update(include_in_eta=True, elapsed_seconds=time.perf_counter() - item_start, failed=True)
+            dismiss_rating_prompt(driver)
             continue
 
         time.sleep(POST_ACTION_DELAY_SECONDS)
